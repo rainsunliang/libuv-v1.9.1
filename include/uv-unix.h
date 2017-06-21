@@ -25,7 +25,7 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
-#include <dirent.h>
+#include <dirent.h> /*POSIX标准定义的unix类目录操作的头文件*/
 
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -40,7 +40,7 @@
 #include <pthread.h>
 #include <signal.h>
 
-#include "uv-threadpool.h"
+#include "uv-threadpool.h" /*线程池*/
 
 #if defined(__linux__)
 # include "uv-linux.h"
@@ -58,7 +58,7 @@
 #endif
 
 #ifndef PTHREAD_BARRIER_SERIAL_THREAD
-# include "pthread-barrier.h"
+# include "pthread-barrier.h"   /*引入线程屏障*/
 #endif
 
 #ifndef NI_MAXHOST
@@ -70,28 +70,30 @@
 #endif
 
 #ifndef UV_IO_PRIVATE_PLATFORM_FIELDS
-# define UV_IO_PRIVATE_PLATFORM_FIELDS /* empty */
+# define UV_IO_PRIVATE_PLATFORM_FIELDS /* empty */  /*linux系统为空*/
 #endif
 
 struct uv__io_s;
 struct uv__async;
 struct uv_loop_s;
 
+/*IO类型的回调函数*/
 typedef void (*uv__io_cb)(struct uv_loop_s* loop,
                           struct uv__io_s* w,
                           unsigned int events);
 typedef struct uv__io_s uv__io_t;
 
 struct uv__io_s {
-  uv__io_cb cb;
-  void* pending_queue[2];
-  void* watcher_queue[2];
+  uv__io_cb cb; /*回调函数*/
+  void* pending_queue[2]; /*等待处理队列,*/
+  void* watcher_queue[2]; /**/
   unsigned int pevents; /* Pending event mask i.e. mask at next tick. */
   unsigned int events;  /* Current event mask. */
-  int fd;
-  UV_IO_PRIVATE_PLATFORM_FIELDS
+  int fd; /*文件描述符*/
+  UV_IO_PRIVATE_PLATFORM_FIELDS /*linux为空*/
 };
 
+/*异步消息类的回调函数*/
 typedef void (*uv__async_cb)(struct uv_loop_s* loop,
                              struct uv__async* w,
                              unsigned int nevents);
@@ -141,44 +143,44 @@ typedef pthread_barrier_t uv_barrier_t;
 
 
 /* Platform-specific definitions for uv_spawn support. */
-typedef gid_t uv_gid_t;
-typedef uid_t uv_uid_t;
+typedef gid_t uv_gid_t; /* user group id */
+typedef uid_t uv_uid_t; /* user id */
 
 typedef struct dirent uv__dirent_t;
 
 #if defined(DT_UNKNOWN)
 # define HAVE_DIRENT_TYPES
-# if defined(DT_REG)
+# if defined(DT_REG)  /*regural file 普通文件*/
 #  define UV__DT_FILE DT_REG
 # else
 #  define UV__DT_FILE -1
 # endif
-# if defined(DT_DIR)
+# if defined(DT_DIR)  /*目录*/
 #  define UV__DT_DIR DT_DIR
 # else
 #  define UV__DT_DIR -2
 # endif
-# if defined(DT_LNK)
+# if defined(DT_LNK) /*连接*/
 #  define UV__DT_LINK DT_LNK
 # else
 #  define UV__DT_LINK -3
 # endif
-# if defined(DT_FIFO)
+# if defined(DT_FIFO) /*命名管道或者FIFO*/
 #  define UV__DT_FIFO DT_FIFO
 # else
 #  define UV__DT_FIFO -4
 # endif
-# if defined(DT_SOCK)
+# if defined(DT_SOCK) /*套接字*/
 #  define UV__DT_SOCKET DT_SOCK
 # else
 #  define UV__DT_SOCKET -5
 # endif
-# if defined(DT_CHR)
+# if defined(DT_CHR) /*字符设备文件*/
 #  define UV__DT_CHAR DT_CHR
 # else
 #  define UV__DT_CHAR -6
 # endif
-# if defined(DT_BLK)
+# if defined(DT_BLK) /*块设备文件*/
 #  define UV__DT_BLOCK DT_BLK
 # else
 #  define UV__DT_BLOCK -7

@@ -201,7 +201,7 @@ void uv__io_poll(uv_loop_t* loop, int timeout) {
     return;
   }
 
-  while (!QUEUE_EMPTY(&loop->watcher_queue)) {
+  while (!QUEUE_EMPTY(&loop->watcher_queue)) { /*遍历所有的观察者(每个观察者定义了用户关注的事件)*/
     q = QUEUE_HEAD(&loop->watcher_queue);
     QUEUE_REMOVE(q);
     QUEUE_INIT(q);
@@ -222,14 +222,14 @@ void uv__io_poll(uv_loop_t* loop, int timeout) {
     /* XXX Future optimization: do EPOLL_CTL_MOD lazily if we stop watching
      * events, skip the syscall and squelch the events after epoll_wait().
      */
-    if (uv__epoll_ctl(loop->backend_fd, op, w->fd, &e)) {
+    if (uv__epoll_ctl(loop->backend_fd, op, w->fd, &e)) { /*执行UV__EPOLL_CTL_ADD,但是已经存在*/
       if (errno != EEXIST)
         abort();
 
       assert(op == UV__EPOLL_CTL_ADD);
 
       /* We've reactivated a file descriptor that's been watched before. */
-      if (uv__epoll_ctl(loop->backend_fd, UV__EPOLL_CTL_MOD, w->fd, &e))
+      if (uv__epoll_ctl(loop->backend_fd, UV__EPOLL_CTL_MOD, w->fd, &e)) /*自动修正为MOD*/
         abort();
     }
 

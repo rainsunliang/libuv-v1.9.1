@@ -45,8 +45,8 @@ extern "C" {
 # define UV_EXTERN /* nothing */
 #endif
 
-#include "uv-errno.h"
-#include "uv-version.h"
+#include "uv-errno.h"  /* 错误(号)码定义 */
+#include "uv-version.h" /* 版本定义 */
 #include <stddef.h>
 #include <stdio.h>
 
@@ -59,7 +59,7 @@ extern "C" {
 #if defined(_WIN32)
 # include "uv-win.h"
 #else
-# include "uv-unix.h"
+# include "uv-unix.h" /* 支持类unix系统linux、axi、sunos(solari)、apple os、darwin、各种bsd */
 #endif
 
 /* Expand this list if necessary. */
@@ -170,13 +170,30 @@ extern "C" {
   XX(GETADDRINFO, getaddrinfo)                                                \
   XX(GETNAMEINFO, getnameinfo)                                                \
 
+/*
+  定义错误枚举,展开后为
+  typedef enum {
+    UV_E2BIG = UV__E2BIG,  UV__E2BIG在uv_error.h中定义的int
+    ...
+    UV_ERRNO_MAX = UV__EOF - 1
+  } uv_errno_t;
+ */
 typedef enum {
-#define XX(code, _) UV_ ## code = UV__ ## code,
+#define XX(code, _) UV_ ## code = UV__ ## code, /*UV__##code在uv_error.h中定义*/
   UV_ERRNO_MAP(XX)
 #undef XX
   UV_ERRNO_MAX = UV__EOF - 1
 } uv_errno_t;
 
+/*
+  定义handle类型,展开后为
+  typedef enum {
+    UV_ASYNC,
+    ...
+    UV_FILE,
+    UV_HANDLE_TYPE_MAX 因为从零开始,刚好是最大数量
+  } uv_handle_type;
+ */
 typedef enum {
   UV_UNKNOWN_HANDLE = 0,
 #define XX(uc, lc) UV_##uc,
@@ -186,6 +203,15 @@ typedef enum {
   UV_HANDLE_TYPE_MAX
 } uv_handle_type;
 
+/*
+  定义请求类型,展开后为
+  typedef enum {
+    UV_REQ,
+    ...
+    UV_REQ_TYPE_PRIVATE
+    UV_REQ_TYPE_MAX
+  } uv_req_type;
+ */
 typedef enum {
   UV_UNKNOWN_REQ = 0,
 #define XX(uc, lc) UV_##uc,
@@ -232,17 +258,19 @@ typedef struct uv_interface_address_s uv_interface_address_t;
 typedef struct uv_dirent_s uv_dirent_t;
 typedef struct uv_passwd_s uv_passwd_t;
 
+/* uv_loop_option.UV_LOOP_BLOCK_SIGNAL=0 */
 typedef enum {
   UV_LOOP_BLOCK_SIGNAL
 } uv_loop_option;
 
+/* 3种运行模式,后面具体分析 */
 typedef enum {
   UV_RUN_DEFAULT = 0,
   UV_RUN_ONCE,
   UV_RUN_NOWAIT
 } uv_run_mode;
 
-
+/* 版本相关 */
 UV_EXTERN unsigned int uv_version(void);
 UV_EXTERN const char* uv_version_string(void);
 
@@ -251,6 +279,7 @@ typedef void* (*uv_realloc_func)(void* ptr, size_t size);
 typedef void* (*uv_calloc_func)(size_t count, size_t size);
 typedef void (*uv_free_func)(void* ptr);
 
+/* 自定义内存分配函数 */
 UV_EXTERN int uv_replace_allocator(uv_malloc_func malloc_func,
                                    uv_realloc_func realloc_func,
                                    uv_calloc_func calloc_func,
@@ -323,7 +352,7 @@ typedef struct {
   long tv_nsec;
 } uv_timespec_t;
 
-
+/* 统计信息相关 */
 typedef struct {
   uint64_t st_dev;
   uint64_t st_mode;
@@ -375,15 +404,17 @@ UV_EXTERN const char* uv_err_name(int err);
   /* private */                                                               \
   void* active_queue[2];                                                      \
   void* reserved[4];                                                          \
-  UV_REQ_PRIVATE_FIELDS                                                       \
+  UV_REQ_PRIVATE_FIELDS                                                       \  /* UV_REQ_PRIVATE_FIELDS linux 下为空*/
 
 /* Abstract base class of all requests. */
+/* 所有请求的抽象基类,如何模拟类的实现,看下面的uv_shutdown_s */
 struct uv_req_s {
   UV_REQ_FIELDS
 };
 
 
 /* Platform-specific request types. */
+/* linux 下为空 */
 UV_PRIVATE_REQ_TYPES
 
 
@@ -391,11 +422,12 @@ UV_EXTERN int uv_shutdown(uv_shutdown_t* req,
                           uv_stream_t* handle,
                           uv_shutdown_cb cb);
 
+/* 相当于继承了uv_req_s,因为这两个struct的指针能够直接转化来访问相同的数据 */
 struct uv_shutdown_s {
   UV_REQ_FIELDS
   uv_stream_t* handle;
   uv_shutdown_cb cb;
-  UV_SHUTDOWN_PRIVATE_FIELDS
+  UV_SHUTDOWN_PRIVATE_FIELDS  /* linux下为空 */
 };
 
 
@@ -406,13 +438,19 @@ struct uv_shutdown_s {
   uv_loop_t* loop;                                                            \
   uv_handle_type type;                                                        \
   /* private */                                                               \
-  uv_close_cb close_cb;                                                       \
+  uv_close_cb close_cb;                                                       \ /* 每个handle都可以设置close_cb,在uv_close的时候设置 */
   void* handle_queue[2];                                                      \
   union {                                                                     \
     int fd;                                                                   \
     void* reserved[4];                                                        \
   } u;                                                                        \
   UV_HANDLE_PRIVATE_FIELDS                                                    \
+  /*
+  linux下UV_HANDLE_PRIVATE_FIELDS定义如下:
+  #define UV_HANDLE_PRIVATE_FIELDS                                              \
+  uv_handle_t* next_closing;                                                  \
+  unsigned int flags;                                                         \
+   */
 
 /* The abstract base class of all handles. */
 struct uv_handle_s {
@@ -443,10 +481,23 @@ UV_EXTERN uv_buf_t uv_buf_init(char* base, unsigned int len);
 #define UV_STREAM_FIELDS                                                      \
   /* number of bytes queued for writing */                                    \
   size_t write_queue_size;                                                    \
-  uv_alloc_cb alloc_cb;                                                       \
-  uv_read_cb read_cb;                                                         \
+  uv_alloc_cb alloc_cb;                                                       \  /* 读数据时的buffer分配函数 */
+  uv_read_cb read_cb;                                                         \  /* 读数据回调 */
   /* private */                                                               \
   UV_STREAM_PRIVATE_FIELDS
+  /*
+    linux下定义如下:
+  #define UV_STREAM_PRIVATE_FIELDS                                            \
+  uv_connect_t *connect_req;                                                  \ 连接请求
+  uv_shutdown_t *shutdown_req;                                                \ 关闭请求
+  uv__io_t io_watcher;                                                        \ 监视器
+  void* write_queue[2];                                                       \ 写队列(pre next指针)
+  void* write_completed_queue[2];                                             \ 写完成队列
+  uv_connection_cb connection_cb;                                             \ 连接成功回调
+  int delayed_error;                                                          \
+  int accepted_fd;                                                            \
+  void* queued_fds;                                                           \
+   */
 
 /*
  * uv_stream_t is a subclass of uv_handle_t.
@@ -1466,6 +1517,45 @@ struct uv_loop_s {
   /* Internal flag to signal loop stop. */
   unsigned int stop_flag;
   UV_LOOP_PRIVATE_FIELDS
+  /*
+  linux 系统定义如下
+  #define UV_LOOP_PRIVATE_FIELDS                                              \
+  unsigned long flags;                                                        \ 位图标志
+  int backend_fd;                                                             \ epoll本身的文件描述符
+  void* pending_queue[2];                                                     \
+  void* watcher_queue[2];                                                     \
+  uv__io_t** watchers;                                                        \ 观察者数组
+  unsigned int nwatchers;                                                     \
+  unsigned int nfds;                                                          \
+  void* wq[2];                                                                \
+  uv_mutex_t wq_mutex;                                                        \
+  uv_async_t wq_async;                                                        \
+  uv_rwlock_t cloexec_lock;                                                   \
+  uv_handle_t* closing_handles;                                               \
+  void* process_handles[2];                                                   \
+  void* prepare_handles[2];                                                   \
+  void* check_handles[2];                                                     \
+  void* idle_handles[2];                                                      \
+  void* async_handles[2];                                                     \
+  struct uv__async async_watcher;                                             \ 异步消息观察者
+  struct {                                                                    \
+    void* min;                                                                \
+    unsigned int nelts;                                                       \
+  } timer_heap;                                                               \ 定时器堆(采用堆数据结构处理定时器)
+  uint64_t timer_counter;                                                     \
+  uint64_t time;                                                              \
+  int signal_pipefd[2];                                                       \
+  uv__io_t signal_io_watcher;                                                 \
+  uv_signal_t child_watcher;                                                  \
+  int emfile_fd;                                                              \
+  UV_PLATFORM_LOOP_FIELDS                                                     \
+
+  其中linux下UV_PLATFORM_LOOP_FIELDS定义是:
+  #define UV_PLATFORM_LOOP_FIELDS                                             \
+  uv__io_t inotify_read_watcher;                                              \
+  void* inotify_watchers;                                                     \
+  int inotify_fd;                                                             \
+  */
 };
 
 
