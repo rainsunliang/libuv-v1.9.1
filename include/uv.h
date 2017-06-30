@@ -24,7 +24,7 @@
 #ifndef UV_H
 #define UV_H
 #ifdef __cplusplus
-extern "C" {
+extern "C" {  //use c format has no overload
 #endif
 
 #ifdef _WIN32
@@ -39,7 +39,7 @@ extern "C" {
     /* Building static library. */
 #   define UV_EXTERN /* nothing */
 # endif
-#elif __GNUC__ >= 4
+#elif __GNUC__ >= 4 //GNUC suppor __attribute__
 # define UV_EXTERN __attribute__((visibility("default")))
 #else
 # define UV_EXTERN /* nothing */
@@ -541,6 +541,15 @@ struct uv_write_s {
   uv_stream_t* send_handle;
   uv_stream_t* handle;
   UV_WRITE_PRIVATE_FIELDS
+  /*
+  #define UV_WRITE_PRIVATE_FIELDS                                               \
+  void* queue[2];                                                             \
+  unsigned int write_index;                                                   \
+  uv_buf_t* bufs;                                                             \
+  unsigned int nbufs;                                                         \
+  int error;                                                                  \
+  uv_buf_t bufsml[4];                                                         \
+  */
 };
 
 
@@ -560,7 +569,38 @@ UV_EXTERN int uv_is_closing(const uv_handle_t* handle);
 struct uv_tcp_s {
   UV_HANDLE_FIELDS
   UV_STREAM_FIELDS
-  UV_TCP_PRIVATE_FIELDS
+  UV_TCP_PRIVATE_FIELDS /* empty for linux, by lgw */
+
+  /*
+  by lgw:
+  handler part:
+
+  void* data;                
+  uv_loop_t* loop;                                                            
+  uv_handle_type type;                                         
+  uv_close_cb close_cb;                                                       
+  void* handle_queue[2];                                                      
+  union {                                                                     
+    int fd;                                                                   
+    void* reserved[4];                                                        
+  } u;                                       
+  uv_handle_t* next_closing;                                                  
+  unsigned int flags;
+
+  stream part:
+  size_t write_queue_size;                                                    
+  uv_alloc_cb alloc_cb;                                                         
+  uv_read_cb read_cb; 
+  uv_connect_t *connect_req;                                                 
+  uv_shutdown_t *shutdown_req;                                                
+  uv__io_t io_watcher;                                                        
+  void* write_queue[2];                                                       
+  void* write_completed_queue[2];                                            
+  uv_connection_cb connection_cb;                                             
+  int delayed_error;                                                          
+  int accepted_fd;                                                            
+  void* queued_fds;                                                           
+   */
 };
 
 UV_EXTERN int uv_tcp_init(uv_loop_t*, uv_tcp_t* handle);
@@ -580,9 +620,15 @@ enum uv_tcp_flags {
 UV_EXTERN int uv_tcp_bind(uv_tcp_t* handle,
                           const struct sockaddr* addr,
                           unsigned int flags);
+/*
+  get local ip and port, by lgw
+*/
 UV_EXTERN int uv_tcp_getsockname(const uv_tcp_t* handle,
                                  struct sockaddr* name,
                                  int* namelen);
+/*
+  get romote ip and port, by lgw
+*/
 UV_EXTERN int uv_tcp_getpeername(const uv_tcp_t* handle,
                                  struct sockaddr* name,
                                  int* namelen);
@@ -597,6 +643,10 @@ struct uv_connect_s {
   uv_connect_cb cb;
   uv_stream_t* handle;
   UV_CONNECT_PRIVATE_FIELDS
+  /*
+  #define UV_CONNECT_PRIVATE_FIELDS                                             \
+  void* queue[2];
+  */
 };
 
 
@@ -644,6 +694,14 @@ struct uv_udp_s {
    */
   size_t send_queue_count;
   UV_UDP_PRIVATE_FIELDS
+  /*
+  #define UV_UDP_PRIVATE_FIELDS                                                 \
+  uv_alloc_cb alloc_cb;                                                       \
+  uv_udp_recv_cb recv_cb;                                                     \
+  uv__io_t io_watcher;                                                        \
+  void* write_queue[2];                                                       \
+  void* write_completed_queue[2];                                             \
+  */
 };
 
 /* uv_udp_send_t is a subclass of uv_req_t. */
@@ -652,6 +710,16 @@ struct uv_udp_send_s {
   uv_udp_t* handle;
   uv_udp_send_cb cb;
   UV_UDP_SEND_PRIVATE_FIELDS
+  /*
+  define UV_UDP_SEND_PRIVATE_FIELDS                                            \
+  void* queue[2];                                                             \
+  struct sockaddr_storage addr;                                               \
+  unsigned int nbufs;                                                         \
+  uv_buf_t* bufs;                                                             \
+  ssize_t status;                                                             \
+  uv_udp_send_cb send_cb;                                                     \
+  uv_buf_t bufsml[4];                                                         \
+  */
 };
 
 UV_EXTERN int uv_udp_init(uv_loop_t*, uv_udp_t* handle);
@@ -699,6 +767,12 @@ struct uv_tty_s {
   UV_HANDLE_FIELDS
   UV_STREAM_FIELDS
   UV_TTY_PRIVATE_FIELDS
+  /*
+  by lgw:
+    #define UV_TTY_PRIVATE_FIELDS                                                 \
+    struct termios orig_termios;                                                \
+    int mode;
+  */
 };
 
 typedef enum {
@@ -716,7 +790,7 @@ UV_EXTERN int uv_tty_reset_mode(void);
 UV_EXTERN int uv_tty_get_winsize(uv_tty_t*, int* width, int* height);
 
 #ifdef __cplusplus
-extern "C++" {
+extern "C++" { //use c++ format overload uv_tty_set_mode
 
 inline int uv_tty_set_mode(uv_tty_t* handle, int mode) {
   return uv_tty_set_mode(handle, static_cast<uv_tty_mode_t>(mode));
@@ -738,6 +812,8 @@ struct uv_pipe_s {
   UV_STREAM_FIELDS
   int ipc; /* non-zero if this pipe is used for passing handles */
   UV_PIPE_PRIVATE_FIELDS
+  // #define UV_PIPE_PRIVATE_FIELDS                                                \
+  // const char* pipe_fname; /* strdup'ed */
 };
 
 UV_EXTERN int uv_pipe_init(uv_loop_t*, uv_pipe_t* handle, int ipc);
@@ -781,6 +857,11 @@ UV_EXTERN int uv_poll_stop(uv_poll_t* handle);
 struct uv_prepare_s {
   UV_HANDLE_FIELDS
   UV_PREPARE_PRIVATE_FIELDS
+  /*
+  #define UV_PREPARE_PRIVATE_FIELDS                                             \
+  uv_prepare_cb prepare_cb;                                                   \
+  void* queue[2];                                                             \
+  */
 };
 
 UV_EXTERN int uv_prepare_init(uv_loop_t*, uv_prepare_t* prepare);
@@ -791,6 +872,11 @@ UV_EXTERN int uv_prepare_stop(uv_prepare_t* prepare);
 struct uv_check_s {
   UV_HANDLE_FIELDS
   UV_CHECK_PRIVATE_FIELDS
+  /*
+  #define UV_CHECK_PRIVATE_FIELDS                                               \
+  uv_check_cb check_cb;                                                       \
+  void* queue[2];                                                             \
+  */
 };
 
 UV_EXTERN int uv_check_init(uv_loop_t*, uv_check_t* check);
@@ -801,6 +887,11 @@ UV_EXTERN int uv_check_stop(uv_check_t* check);
 struct uv_idle_s {
   UV_HANDLE_FIELDS
   UV_IDLE_PRIVATE_FIELDS
+  /*
+  #define UV_IDLE_PRIVATE_FIELDS                                                \
+  uv_idle_cb idle_cb;                                                         \
+  void* queue[2];                                                             \
+  */
 };
 
 UV_EXTERN int uv_idle_init(uv_loop_t*, uv_idle_t* idle);
@@ -811,6 +902,12 @@ UV_EXTERN int uv_idle_stop(uv_idle_t* idle);
 struct uv_async_s {
   UV_HANDLE_FIELDS
   UV_ASYNC_PRIVATE_FIELDS
+  /*
+  #define UV_ASYNC_PRIVATE_FIELDS                                               \
+  uv_async_cb async_cb;                                                       \
+  void* queue[2];                                                             \
+  int pending;                                                                \
+  */
 };
 
 UV_EXTERN int uv_async_init(uv_loop_t*,
@@ -827,6 +924,14 @@ UV_EXTERN int uv_async_send(uv_async_t* async);
 struct uv_timer_s {
   UV_HANDLE_FIELDS
   UV_TIMER_PRIVATE_FIELDS
+  /*
+  #define UV_TIMER_PRIVATE_FIELDS                                               \
+  uv_timer_cb timer_cb;                                                       \
+  void* heap_node[3];                                                         \
+  uint64_t timeout;                                                           \
+  uint64_t repeat;                                                            \
+  uint64_t start_id;
+  */
 };
 
 UV_EXTERN int uv_timer_init(uv_loop_t*, uv_timer_t* handle);
@@ -851,11 +956,26 @@ struct uv_getaddrinfo_s {
   uv_loop_t* loop;
   /* struct addrinfo* addrinfo is marked as private, but it really isn't. */
   UV_GETADDRINFO_PRIVATE_FIELDS
+  /*
+  #define UV_GETADDRINFO_PRIVATE_FIELDS                                         \
+  struct uv__work work_req;                                                   \
+  uv_getaddrinfo_cb cb;                                                       \
+  struct addrinfo* hints;                                                     \
+  char* hostname;                                                             \
+  char* service;                                                              \
+  struct addrinfo* addrinfo;                                                  \
+  int retcode;
+  */
 };
 
-
+/*
+  get ip & port from host & service
+  node->host name or ip addr
+  service-> port or standard service(eg: ftp, http etc)
+  hints-> tips for result
+*/
 UV_EXTERN int uv_getaddrinfo(uv_loop_t* loop,
-                             uv_getaddrinfo_t* req,
+                              * req,
                              uv_getaddrinfo_cb getaddrinfo_cb,
                              const char* node,
                              const char* service,
@@ -876,6 +996,9 @@ struct uv_getnameinfo_s {
   UV_GETNAMEINFO_PRIVATE_FIELDS
 };
 
+/*
+  get host and service by lgw
+*/
 UV_EXTERN int uv_getnameinfo(uv_loop_t* loop,
                              uv_getnameinfo_t* req,
                              uv_getnameinfo_cb getnameinfo_cb,
@@ -999,12 +1122,20 @@ struct uv_process_s {
   uv_exit_cb exit_cb;
   int pid;
   UV_PROCESS_PRIVATE_FIELDS
+  /*
+  #define UV_PROCESS_PRIVATE_FIELDS                                             \
+  void* queue[2];                                                             \
+  int status;                                                                 \
+  */
 };
 
 UV_EXTERN int uv_spawn(uv_loop_t* loop,
                        uv_process_t* handle,
                        const uv_process_options_t* options);
 UV_EXTERN int uv_process_kill(uv_process_t*, int signum);
+/*
+  send signal to pid by lgw
+*/
 UV_EXTERN int uv_kill(int pid, int signum);
 
 
@@ -1167,6 +1298,23 @@ struct uv_fs_s {
   const char* path;
   uv_stat_t statbuf;  /* Stores the result of uv_fs_stat() and uv_fs_fstat(). */
   UV_FS_PRIVATE_FIELDS
+  /*
+  in linux: by lgw
+  #define UV_FS_PRIVATE_FIELDS                                                \
+  const char *new_path;                                                       \
+  uv_file file;                                                               \
+  int flags;                                                                  \
+  mode_t mode;                                                                \
+  unsigned int nbufs;                                                         \
+  uv_buf_t* bufs;                                                             \
+  off_t off;                                                                  \
+  uv_uid_t uid;                                                               \
+  uv_gid_t gid;                                                               \
+  double atime;                                                               \
+  double mtime;                                                               \
+  struct uv__work work_req;                                                   \
+  uv_buf_t bufsml[4];                                                         \
+  */
 };
 
 UV_EXTERN void uv_fs_req_cleanup(uv_fs_t* req);

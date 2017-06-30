@@ -547,7 +547,7 @@ int uv__cloexec(int fd, int set) {
     r = ioctl(fd, set ? FIOCLEX : FIONCLEX);
   while (r == -1 && errno == EINTR);
 
-  if (r)
+  if (r) /* return 0 if ioctrl success, by lgw */
     return -errno;
 
   return 0;
@@ -954,7 +954,7 @@ int uv__open_cloexec(const char* path, int flags) {
   int err;
   int fd;
 
-#if defined(UV__O_CLOEXEC)
+#if defined(UV__O_CLOEXEC) /* linux suport close on exec, by lgw */
   static int no_cloexec;
 
   if (!no_cloexec) {
@@ -962,7 +962,7 @@ int uv__open_cloexec(const char* path, int flags) {
     if (fd != -1)
       return fd;
 
-    if (errno != EINVAL)
+    if (errno != EINVAL) /* we know EINVAL means error args */
       return -errno;
 
     /* O_CLOEXEC not supported. */
@@ -974,7 +974,7 @@ int uv__open_cloexec(const char* path, int flags) {
   if (fd == -1)
     return -errno;
 
-  err = uv__cloexec(fd, 1);
+  err = uv__cloexec(fd, 1); /* call ioctrl to set cloexec */
   if (err) {
     uv__close(fd);
     return err;

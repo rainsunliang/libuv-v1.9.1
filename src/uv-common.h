@@ -60,7 +60,7 @@ enum {
   UV__HANDLE_REF      = 0x2000,
   UV__HANDLE_CLOSING  = 0 /* no-op on unix */
 };
-#else
+#else /* status define by lgw */
 # define UV__HANDLE_INTERNAL  0x80
 # define UV__HANDLE_ACTIVE    0x40
 # define UV__HANDLE_REF       0x20
@@ -178,6 +178,12 @@ void uv__fs_scandir_cleanup(uv_fs_t* req);
   }                                                                           \
   while (0)
 
+/*
+  1.add ref to flags
+  2.if flags has UV__HANDLE_CLOSING break
+  3.flasg has't UV__HANDLE_CLOSING  but has UV__HANDLE_ACTIVE excute uv__active_handle_add
+    (which is (h)->loop->active_handles++;)
+*/
 #define uv__handle_ref(h)                                                     \
   do {                                                                        \
     if (((h)->flags & UV__HANDLE_REF) != 0) break;                            \
