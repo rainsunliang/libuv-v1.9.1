@@ -37,7 +37,7 @@ static int maybe_new_socket(uv_tcp_t* handle, int domain, int flags) {
     return 0;
   }
 
-  err = uv__socket(domain, SOCK_STREAM, 0);
+  err = uv__socket(domain, SOCK_STREAM, 0); /* Open a socket in non-blocking close-on-exec mode, by lgw */
   if (err < 0)
     return err;
   sockfd = err;
@@ -70,7 +70,7 @@ int uv_tcp_init_ex(uv_loop_t* loop, uv_tcp_t* tcp, unsigned int flags) {
    */
 
   if (domain != AF_UNSPEC) {
-    int err = maybe_new_socket(tcp, domain, 0);
+    int err = maybe_new_socket(tcp, domain, 0); /* 3th arg flags = 0, by lgw */
     if (err) {
       QUEUE_REMOVE(&tcp->handle_queue);
       return err;
@@ -99,12 +99,12 @@ int uv__tcp_bind(uv_tcp_t* tcp,
 
   err = maybe_new_socket(tcp,
                          addr->sa_family,
-                         UV_STREAM_READABLE | UV_STREAM_WRITABLE);
+                         UV_STREAM_READABLE | UV_STREAM_WRITABLE);  /* add flag  UV_STREAM_READABLE and UV_STREAM_WRITABLE */
   if (err)
     return err;
 
   on = 1;
-  if (setsockopt(tcp->io_watcher.fd, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on)))
+  if (setsockopt(tcp->io_watcher.fd, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on))) /* reuseraddr by default, by lgw */
     return -errno;
 
 #ifdef IPV6_V6ONLY
@@ -128,7 +128,7 @@ int uv__tcp_bind(uv_tcp_t* tcp,
       return -EINVAL;
     return -errno;
   }
-  tcp->delayed_error = -errno;
+  tcp->delayed_error = -errno; /*  errno == EADDRINUSE */
 
   if (addr->sa_family == AF_INET6)
     tcp->flags |= UV_HANDLE_IPV6;
@@ -252,7 +252,7 @@ int uv_tcp_listen(uv_tcp_t* tcp, int backlog, uv_connection_cb cb) {
   int err;
 
   if (tcp->delayed_error)
-    return tcp->delayed_error;
+    return tcp->delayed_error; /* EADDRINUSE in bind , by lgw */
 
   if (single_accept == -1) {
     const char* val = getenv("UV_TCP_SINGLE_ACCEPT");
@@ -260,20 +260,20 @@ int uv_tcp_listen(uv_tcp_t* tcp, int backlog, uv_connection_cb cb) {
   }
 
   if (single_accept)
-    tcp->flags |= UV_TCP_SINGLE_ACCEPT;
+    tcp->flags |= UV_TCP_SINGLE_ACCEPT; /* accept in idle, by lgw */
 
-  err = maybe_new_socket(tcp, AF_INET, UV_STREAM_READABLE);
+  err = maybe_new_socket(tcp, AF_INET, UV_STREAM_READABLE); /* add UV_STREAM_READABLE to handler, by lgw  */
   if (err)
     return err;
 
-  if (listen(tcp->io_watcher.fd, backlog))
+  if (listen(tcp->io_watcher.fd, backlog)) /* call syscall, bocklog is waitaccept socket quene length, by lgw */
     return -errno;
 
   tcp->connection_cb = cb;
 
   /* Start listening for connections. */
-  tcp->io_watcher.cb = uv__server_io;
-  uv__io_start(tcp->loop, &tcp->io_watcher, POLLIN);
+  tcp->io_watcher.cb = uv__server_io; /* uv__server_iod defined in stream.c, by lgw */
+  uv__io_start(tcp->loop, &tcp->io_watcher, POLLIN); /* uv__io_start defined in core.c, by lgw */
 
   return 0;
 }
@@ -287,7 +287,7 @@ int uv__tcp_nodelay(int fd, int on) {
 
 
 int uv__tcp_keepalive(int fd, int on, unsigned int delay) {
-  if (setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, &on, sizeof(on)))
+  if (setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, &on, sizeof(on))) /* set keep alive flag by lgw*/
     return -errno;
 
 #ifdef TCP_KEEPIDLE

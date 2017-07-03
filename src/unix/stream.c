@@ -102,7 +102,7 @@ void uv__stream_init(uv_loop_t* loop,
   stream->select = NULL;
 #endif /* defined(__APPLE_) */
 
-  uv__io_init(&stream->io_watcher, uv__stream_io, -1);
+  uv__io_init(&stream->io_watcher, uv__stream_io, -1); /* fd default -1 */
 }
 
 
@@ -391,14 +391,14 @@ int uv__stream_open(uv_stream_t* stream, int fd, int flags) {
   int enable;
 #endif
 
-  if (!(stream->io_watcher.fd == -1 || stream->io_watcher.fd == fd))
+  if (!(stream->io_watcher.fd == -1 || stream->io_watcher.fd == fd)) /* !=-1 && == fd, by lgw */
     return -EBUSY;
 
   assert(fd >= 0);
   stream->flags |= flags;
 
   if (stream->type == UV_TCP) {
-    if ((stream->flags & UV_TCP_NODELAY) && uv__tcp_nodelay(fd, 1))
+    if ((stream->flags & UV_TCP_NODELAY) && uv__tcp_nodelay(fd, 1)) /* check nodelay, by lgw */
       return -errno;
 
     /* TODO Use delay the user passed in. */
@@ -415,7 +415,7 @@ int uv__stream_open(uv_stream_t* stream, int fd, int flags) {
   }
 #endif
 
-  stream->io_watcher.fd = fd;
+  stream->io_watcher.fd = fd; /* set fd or replace old fd(oldfd != fd), by lgw */
 
   return 0;
 }

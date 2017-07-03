@@ -398,7 +398,7 @@ int uv__socket(int domain, int type, int protocol) {
   int sockfd;
   int err;
 
-#if defined(SOCK_NONBLOCK) && defined(SOCK_CLOEXEC)
+#if defined(SOCK_NONBLOCK) && defined(SOCK_CLOEXEC)  /* linux go to this path, by lgw */
   sockfd = socket(domain, type | SOCK_NONBLOCK | SOCK_CLOEXEC, protocol);
   if (sockfd != -1)
     return sockfd;
@@ -420,7 +420,7 @@ int uv__socket(int domain, int type, int protocol) {
     return err;
   }
 
-#if defined(SO_NOSIGPIPE)
+#if defined(SO_NOSIGPIPE) /* defined in apple, not define in linux,  in linux use signal(SIGPIPE, SIG_IGN); or call send/recv function with flag MSG_NOSIGNAL by lgw */
   {
     int on = 1;
     setsockopt(sockfd, SOL_SOCKET, SO_NOSIGPIPE, &on, sizeof(on));
@@ -792,18 +792,18 @@ static void maybe_resize(uv_loop_t* loop, unsigned int len) {
 
   /* Preserve fake watcher list and count at the end of the watchers */
   if (loop->watchers != NULL) {
-    fake_watcher_list = loop->watchers[loop->nwatchers];
+    fake_watcher_list = loop->watchers[loop->nwatchers]; /* watchers is tow-dim array, at the end of watchers is fake_watcher_list & &fake_watcher_counter, by lgw */
     fake_watcher_count = loop->watchers[loop->nwatchers + 1];
   } else {
     fake_watcher_list = NULL;
     fake_watcher_count = NULL;
   }
 
-  nwatchers = next_power_of_two(len + 2) - 2;
+  nwatchers = next_power_of_two(len + 2) - 2; /* exclude fake_watcher_list & &fake_watcher_counter, by lgw */
   watchers = uv__realloc(loop->watchers,
                          (nwatchers + 2) * sizeof(loop->watchers[0]));
 
-  if (watchers == NULL)
+  if (watchers == NULL) /* no memory , by lgw */
     abort();
   for (i = loop->nwatchers; i < nwatchers; i++)
     watchers[i] = NULL;
@@ -838,7 +838,7 @@ void uv__io_start(uv_loop_t* loop, uv__io_t* w, unsigned int events) {
   assert(w->fd >= 0);
   assert(w->fd < INT_MAX);
 
-  w->pevents |= events;
+  w->pevents |= events; /* add request events to pending events, by lgw */
   maybe_resize(loop, w->fd + 1);
 
 #if !defined(__sun)

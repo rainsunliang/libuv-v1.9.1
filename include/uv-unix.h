@@ -87,8 +87,8 @@ struct uv__io_s {
   uv__io_cb cb; /*回调函数*/
   void* pending_queue[2]; /*等待处理队列,*/
   void* watcher_queue[2]; /**/
-  unsigned int pevents; /* Pending event mask i.e. mask at next tick. */
-  unsigned int events;  /* Current event mask. */
+  unsigned int pevents; /* Pending event mask i.e. mask at next tick. have not in epoll*/
+  unsigned int events;  /* Current event mask. now in epoll */
   int fd; /*文件描述符*/
   UV_IO_PRIVATE_PLATFORM_FIELDS /*linux为空*/
 };
