@@ -123,15 +123,18 @@ int uv__socket_sockopt(uv_handle_t* handle, int optname, int* value);
 
 void uv__fs_scandir_cleanup(uv_fs_t* req);
 
+/* test loop->active_reqs queue size, by lgw */
 #define uv__has_active_reqs(loop)                                             \
   (QUEUE_EMPTY(&(loop)->active_reqs) == 0)
 
+/* add req to loop->active_reqs, by lgw */
 #define uv__req_register(loop, req)                                           \
   do {                                                                        \
     QUEUE_INSERT_TAIL(&(loop)->active_reqs, &(req)->active_queue);            \
   }                                                                           \
   while (0)
 
+/* remove req from loop->active_reqs, by lgw */
 #define uv__req_unregister(loop, req)                                         \
   do {                                                                        \
     assert(uv__has_active_reqs(loop));                                        \
@@ -139,27 +142,36 @@ void uv__fs_scandir_cleanup(uv_fs_t* req);
   }                                                                           \
   while (0)
 
+/* test has active handles, use counter, by lgw */
 #define uv__has_active_handles(loop)                                          \
   ((loop)->active_handles > 0)
 
+/* incr counter, by lgw */
 #define uv__active_handle_add(h)                                              \
   do {                                                                        \
     (h)->loop->active_handles++;                                              \
   }                                                                           \
   while (0)
 
+/* desc counter, by lgw */
 #define uv__active_handle_rm(h)                                               \
   do {                                                                        \
     (h)->loop->active_handles--;                                              \
   }                                                                           \
   while (0)
-
+/* check handle UV__HANDLE_ACTIVE flag, by lgw  */
 #define uv__is_active(h)                                                      \
   (((h)->flags & UV__HANDLE_ACTIVE) != 0)
 
+/* check handle UV_CLOSING and UV_CLOSED flag, by lgw */
 #define uv__is_closing(h)                                                     \
   (((h)->flags & (UV_CLOSING |  UV_CLOSED)) != 0)
 
+/*
+  1.add  UV__HANDLE_ACTIVE to handler->flags
+  2.if handler->flags containt UV__HANDLE_REF, then loop->active_handles++
+  by lgw
+*/
 #define uv__handle_start(h)                                                   \
   do {                                                                        \
     assert(((h)->flags & UV__HANDLE_CLOSING) == 0);                           \
@@ -211,6 +223,12 @@ void uv__fs_scandir_cleanup(uv_fs_t* req);
 # define uv__handle_platform_init(h) ((h)->next_closing = NULL)
 #endif
 
+/*
+  1.add loop,type,UV__HANDLE_REF to handle
+  2.add handle into loop->handle_queue
+  3.handle->next_closing = NULL
+  by lgw
+*/
 #define uv__handle_init(loop_, h, type_)                                      \
   do {                                                                        \
     (h)->loop = (loop_);                                                      \

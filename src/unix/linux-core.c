@@ -433,6 +433,7 @@ uint64_t uv__hrtime(uv_clocktype_t type) {
    * when it has microsecond granularity or better (unlikely).
    */
   if (type == UV_CLOCK_FAST && fast_clock_id == -1) {
+    /* clock_getres 得到不同时钟的精度，也就是时钟间隔, then select one clock, by lgw*/
     if (clock_getres(CLOCK_MONOTONIC_COARSE, &t) == 0 &&
         t.tv_nsec <= 1 * 1000 * 1000) {
       fast_clock_id = CLOCK_MONOTONIC_COARSE;
@@ -445,6 +446,7 @@ uint64_t uv__hrtime(uv_clocktype_t type) {
   if (type == UV_CLOCK_FAST)
     clock_id = fast_clock_id;
 
+  /* get clock time, by lgw */
   if (clock_gettime(clock_id, &t))
     return 0;  /* Not really possible. */
 

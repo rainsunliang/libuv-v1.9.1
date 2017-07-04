@@ -300,29 +300,29 @@ int uv_backend_fd(const uv_loop_t* loop) {
 
 
 int uv_backend_timeout(const uv_loop_t* loop) {
-  if (loop->stop_flag != 0)
+  if (loop->stop_flag != 0) /* has invoke uv_stop, by lgw */
     return 0;
 
-  if (!uv__has_active_handles(loop) && !uv__has_active_reqs(loop))
+  if (!uv__has_active_handles(loop) && !uv__has_active_reqs(loop)) /* has not active handlers and reqs, because not need poll, loop will stop sooner, by lgw */
     return 0;
 
-  if (!QUEUE_EMPTY(&loop->idle_handles))
+  if (!QUEUE_EMPTY(&loop->idle_handles)) /* has idle handler, by lgw */
     return 0;
 
-  if (!QUEUE_EMPTY(&loop->pending_queue))
+  if (!QUEUE_EMPTY(&loop->pending_queue)) /* has pending task, by lgw */
     return 0;
 
-  if (loop->closing_handles)
+  if (loop->closing_handles) /* has closing handle, by lgw */
     return 0;
 
-  return uv__next_timeout(loop);
+  return uv__next_timeout(loop); /* time for next timer, by lgw */
 }
 
-
+/* return 0 or 1, by lgw */
 static int uv__loop_alive(const uv_loop_t* loop) {
-  return uv__has_active_handles(loop) ||
-         uv__has_active_reqs(loop) ||
-         loop->closing_handles != NULL;
+  return uv__has_active_handles(loop) || /* has handles not duil, by lgw */
+         uv__has_active_reqs(loop) ||  /* has request not duil, by lgw */
+         loop->closing_handles != NULL; /* has closing_handle not duil, by lgw */
 }
 
 
@@ -337,19 +337,20 @@ int uv_run(uv_loop_t* loop, uv_run_mode mode) {
   int ran_pending;
 
   r = uv__loop_alive(loop);
-  if (!r)
-    uv__update_time(loop);
+  if (!r) /* will not enter while bellow, by lgw */
+    uv__update_time(loop); /* update loop->time, by lgw */
 
   while (r != 0 && loop->stop_flag == 0) {
-    uv__update_time(loop);
+    uv__update_time(loop); /* update loop->time, by lgw */
     uv__run_timers(loop);
     ran_pending = uv__run_pending(loop);
-    uv__run_idle(loop);
-    uv__run_prepare(loop);
+    uv__run_idle(loop); /* defined in loop-watcher.c, retrieve loop->idle_handles invote all callback, by lgw */
+    uv__run_prepare(loop); /* as above, defined in loop-wacher.c, retrieve loop->prepare_handlers, by lgw */
 
     timeout = 0;
-    if ((mode == UV_RUN_ONCE && !ran_pending) || mode == UV_RUN_DEFAULT)
-      timeout = uv_backend_timeout(loop);
+    if ((mode == UV_RUN_ONCE && !ran_pending) /* run_once mode and has no pengding task for user */
+        || mode == UV_RUN_DEFAULT)
+      timeout = uv_backend_timeout(loop); /* calc proper time to wait, by lgw */
 
     uv__io_poll(loop, timeout);
     uv__run_check(loop);
@@ -376,10 +377,10 @@ int uv_run(uv_loop_t* loop, uv_run_mode mode) {
   /* The if statement lets gcc compile it to a conditional store. Avoids
    * dirtying a cache line.
    */
-  if (loop->stop_flag != 0)
+  if (loop->stop_flag != 0) /* uv_stop set stop_flag = 1, by lgw */
     loop->stop_flag = 0;
 
-  return r;
+  return r; /* return the if has active something, see uv__loop_alive, by lgw */
 }
 
 
@@ -746,7 +747,7 @@ int uv_fileno(const uv_handle_t* handle, uv_os_fd_t* fd) {
   return 0;
 }
 
-
+/* retrieve pending_queue call all watcher's callback, if has pending task return 1, or return 0,  by lgw  */
 static int uv__run_pending(uv_loop_t* loop) {
   QUEUE* q;
   QUEUE pq;
@@ -761,8 +762,8 @@ static int uv__run_pending(uv_loop_t* loop) {
     q = QUEUE_HEAD(&pq);
     QUEUE_REMOVE(q);
     QUEUE_INIT(q);
-    w = QUEUE_DATA(q, uv__io_t, pending_queue);
-    w->cb(loop, w, POLLOUT);
+    w = QUEUE_DATA(q, uv__io_t, pending_queue); /* get watcher strcut, by lgw */
+    w->cb(loop, w, POLLOUT); /* invote callback, by lgw */
   }
 
   return 1;
@@ -839,9 +840,10 @@ void uv__io_start(uv_loop_t* loop, uv__io_t* w, unsigned int events) {
   assert(w->fd < INT_MAX);
 
   w->pevents |= events; /* add request events to pending events, by lgw */
-  maybe_resize(loop, w->fd + 1);
+  maybe_resize(loop, w->fd + 1); /* resize loop->watchers array if need , by lgw */
+  /* why w->fd + 1, because array index begin with 0, if use +1 we can use w->fd direct, by lgw */
 
-#if !defined(__sun)
+#if !defined(__sun) /* linux go into, by lgw */
   /* The event ports backend needs to rearm all file descriptors on each and
    * every tick of the event loop but the other backends allow us to
    * short-circuit here if the event mask is unchanged.
@@ -855,11 +857,11 @@ void uv__io_start(uv_loop_t* loop, uv__io_t* w, unsigned int events) {
   }
 #endif
 
-  if (QUEUE_EMPTY(&w->watcher_queue))
-    QUEUE_INSERT_TAIL(&loop->watcher_queue, &w->watcher_queue);
+  if (QUEUE_EMPTY(&w->watcher_queue)) /* has not add to loop->watcher_quque, by lgw */
+    QUEUE_INSERT_TAIL(&loop->watcher_queue, &w->watcher_queue); /* add w to loop, loop->watcher_queue, by lgw */
 
   if (loop->watchers[w->fd] == NULL) {
-    loop->watchers[w->fd] = w;
+    loop->watchers[w->fd] = w; /* index w in loop->watchers array */
     loop->nfds++;
   }
 }
@@ -950,6 +952,7 @@ int uv_getrusage(uv_rusage_t* rusage) {
 }
 
 
+/* close fd on exec function be called */
 int uv__open_cloexec(const char* path, int flags) {
   int err;
   int fd;
