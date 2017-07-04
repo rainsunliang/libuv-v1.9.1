@@ -325,7 +325,7 @@ int uv__epoll_wait(int epfd,
 #endif
   return result;
 #else
-  return errno = ENOSYS, -1;
+  return errno = ENOSYS, -1; /* ENOSYS mean function not found, by lgw */
 #endif
 }
 

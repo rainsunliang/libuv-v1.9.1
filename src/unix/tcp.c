@@ -273,7 +273,7 @@ int uv_tcp_listen(uv_tcp_t* tcp, int backlog, uv_connection_cb cb) {
 
   /* Start listening for connections. */
   tcp->io_watcher.cb = uv__server_io; /* uv__server_iod defined in stream.c, by lgw */
-  uv__io_start(tcp->loop, &tcp->io_watcher, POLLIN); /* uv__io_start defined in core.c, by lgw */
+  uv__io_start(tcp->loop, &tcp->io_watcher, POLLIN); /* only POLIN, NO POLLET means epoll use LT mode(which default),  uv__io_start defined in core.c, by lgw */
 
   return 0;
 }

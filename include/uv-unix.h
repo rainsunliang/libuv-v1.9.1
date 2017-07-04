@@ -84,9 +84,9 @@ typedef void (*uv__io_cb)(struct uv_loop_s* loop,
 typedef struct uv__io_s uv__io_t;
 
 struct uv__io_s {
-  uv__io_cb cb; /*回调函数*/
-  void* pending_queue[2]; /*等待处理队列,*/
-  void* watcher_queue[2]; /**/
+  uv__io_cb cb; /* 回调函数 */
+  void* pending_queue[2]; /* 等待处理队列 */
+  void* watcher_queue[2]; /* link to loop->watcher_queue, when uv__io_start will link it, by lgw */
   unsigned int pevents; /* Pending event mask i.e. mask at next tick. have not in epoll*/
   unsigned int events;  /* Current event mask. now in epoll */
   int fd; /*文件描述符*/

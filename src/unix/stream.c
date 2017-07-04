@@ -505,16 +505,17 @@ static int uv__emfile_trick(uv_loop_t* loop, int accept_fd) {
 # define UV_DEC_BACKLOG(w) /* no-op */
 #endif /* defined(UV_HAVE_KQUEUE) */
 
-
+/* tcp 和 pipe 的listen 函数回调 */
 void uv__server_io(uv_loop_t* loop, uv__io_t* w, unsigned int events) {
   uv_stream_t* stream;
   int err;
 
   stream = container_of(w, uv_stream_t, io_watcher);
-  assert(events == POLLIN);
+  assert(events == POLLIN); /* 只能是POLLIN */
   assert(stream->accepted_fd == -1);
   assert(!(stream->flags & UV_CLOSING));
 
+  /* 每次回调后, 继续 add POLLIN event 跟 uv_tcp_listen 里的作用一样, by lgw */
   uv__io_start(stream->loop, &stream->io_watcher, POLLIN);
 
   /* connection_cb can close the server socket while we're
@@ -528,12 +529,12 @@ void uv__server_io(uv_loop_t* loop, uv__io_t* w, unsigned int events) {
       return;
 #endif /* defined(UV_HAVE_KQUEUE) */
 
-    err = uv__accept(uv__stream_fd(stream));
+    err = uv__accept(uv__stream_fd(stream)); /* 系统调用 */
     if (err < 0) {
-      if (err == -EAGAIN || err == -EWOULDBLOCK)
+      if (err == -EAGAIN || err == -EWOULDBLOCK) /* Try Again, 不直接循环 accept? by lgw */
         return;  /* Not an error. */
 
-      if (err == -ECONNABORTED)
+      if (err == -ECONNABORTED) /* Software caused connection abort, by lgw */
         continue;  /* Ignore. Nothing we can do about that. */
 
       if (err == -EMFILE || err == -ENFILE) {
@@ -542,16 +543,17 @@ void uv__server_io(uv_loop_t* loop, uv__io_t* w, unsigned int events) {
           break;
       }
 
-      stream->connection_cb(stream, err);
+      stream->connection_cb(stream, err);/* 回调(错误) */
       continue;
     }
 
-    UV_DEC_BACKLOG(w)
+    UV_DEC_BACKLOG(w)  /* # define UV_DEC_BACKLOG(w) 不做任何事情 */
     stream->accepted_fd = err;
-    stream->connection_cb(stream, 0);
+    stream->connection_cb(stream, 0); /* 回调(成功) */
 
     if (stream->accepted_fd != -1) {
       /* The user hasn't yet accepted called uv_accept() */
+      /* 如果用户调用了uv_accept  stream->accepted_fd会被设置为-1 */
       uv__io_stop(loop, &stream->io_watcher, POLLIN);
       return;
     }
@@ -567,7 +569,7 @@ void uv__server_io(uv_loop_t* loop, uv__io_t* w, unsigned int events) {
 
 #undef UV_DEC_BACKLOG
 
-
+/* 用户调用 */
 int uv_accept(uv_stream_t* server, uv_stream_t* client) {
   int err;
 
@@ -1105,11 +1107,12 @@ static void uv__read(uv_stream_t* stream) {
   int err;
   int is_ipc;
 
-  stream->flags &= ~UV_STREAM_READ_PARTIAL;
+  stream->flags &= ~UV_STREAM_READ_PARTIAL; /* 先取消部分读标志 */
 
   /* Prevent loop starvation when the data comes in as fast as (or faster than)
-   * we can read it. XXX Need to rearm fd if we switch to edge-triggered I/O.
+   * we can read it. XXX Need to rearm(再武装) fd if we switch to edge-triggered I/O.
    */
+  /* 防止大量的数据达到一直在读,导致循环饿死,其他处理不了。libuv是LT模式 */
   count = 32;
 
   is_ipc = stream->type == UV_NAMED_PIPE && ((uv_pipe_t*) stream)->ipc;
@@ -1240,14 +1243,14 @@ int uv_shutdown(uv_shutdown_t* req, uv_stream_t* stream, uv_shutdown_cb cb) {
 static void uv__stream_io(uv_loop_t* loop, uv__io_t* w, unsigned int events) {
   uv_stream_t* stream;
 
-  stream = container_of(w, uv_stream_t, io_watcher);
+  stream = container_of(w, uv_stream_t, io_watcher); /* 通过io_watcher获取到 uv_stream_t, by lgw */
 
   assert(stream->type == UV_TCP ||
          stream->type == UV_NAMED_PIPE ||
          stream->type == UV_TTY);
   assert(!(stream->flags & UV_CLOSING));
 
-  if (stream->connect_req) {
+  if (stream->connect_req) { /* 如果是连接请求 */
     uv__stream_connect(stream);
     return;
   }
@@ -1255,10 +1258,10 @@ static void uv__stream_io(uv_loop_t* loop, uv__io_t* w, unsigned int events) {
   assert(uv__stream_fd(stream) >= 0);
 
   /* Ignore POLLHUP here. Even it it's set, there may still be data to read. */
-  if (events & (POLLIN | POLLERR | POLLHUP))
+  if (events & (POLLIN | POLLERR | POLLHUP)) /* 读数据,by lgw */
     uv__read(stream);
 
-  if (uv__stream_fd(stream) == -1)
+  if (uv__stream_fd(stream) == -1) /* 上面uv__read(stream),用户调用了close */
     return;  /* read_cb closed stream. */
 
   /* Short-circuit iff POLLHUP is set, the user is still interested in read

@@ -201,6 +201,7 @@ void uv__io_poll(uv_loop_t* loop, int timeout) {
     return;
   }
 
+  /* retrieve loop->watcher_queue, add events to epoll, by lgw */
   while (!QUEUE_EMPTY(&loop->watcher_queue)) { /*遍历所有的观察者(每个观察者定义了用户关注的事件)*/
     q = QUEUE_HEAD(&loop->watcher_queue);
     QUEUE_REMOVE(q);
@@ -214,7 +215,7 @@ void uv__io_poll(uv_loop_t* loop, int timeout) {
     e.events = w->pevents;
     e.data = w->fd;
 
-    if (w->events == 0)
+    if (w->events == 0) /* has no old epoll events, by lgw */
       op = UV__EPOLL_CTL_ADD;
     else
       op = UV__EPOLL_CTL_MOD;
@@ -233,7 +234,7 @@ void uv__io_poll(uv_loop_t* loop, int timeout) {
         abort();
     }
 
-    w->events = w->pevents;
+    w->events = w->pevents; /* save old events, by lgw */
   }
 
   sigmask = 0;
@@ -248,6 +249,7 @@ void uv__io_poll(uv_loop_t* loop, int timeout) {
   count = 48; /* Benchmarks suggest this gives the best throughput. */
   real_timeout = timeout;
 
+  /* invoke epoll_wait or epoll_pwait, by lgw */
   for (;;) {
     /* See the comment for max_safe_timeout for an explanation of why
      * this is necessary.  Executive summary: kernel bug workaround.
@@ -256,16 +258,16 @@ void uv__io_poll(uv_loop_t* loop, int timeout) {
       timeout = max_safe_timeout;
 
     if (sigmask != 0 && no_epoll_pwait != 0)
-      if (pthread_sigmask(SIG_BLOCK, &sigset, NULL))
+      if (pthread_sigmask(SIG_BLOCK, &sigset, NULL)) /* duil with signals which sigset spec only in main thread, by lgw */
         abort();
 
     if (no_epoll_wait != 0 || (sigmask != 0 && no_epoll_pwait == 0)) {
-      nfds = uv__epoll_pwait(loop->backend_fd,
+      nfds = uv__epoll_pwait(loop->backend_fd, /* safely wait events untill events or timeout or get a signal which sigmask arg spec, by lgw */
                              events,
                              ARRAY_SIZE(events),
                              timeout,
                              sigmask);
-      if (nfds == -1 && errno == ENOSYS)
+      if (nfds == -1 && errno == ENOSYS) /* ENOSYS mean Function not implemented, in linux errno.h, by lgw */
         no_epoll_pwait = 1;
     } else {
       nfds = uv__epoll_wait(loop->backend_fd,
@@ -277,19 +279,19 @@ void uv__io_poll(uv_loop_t* loop, int timeout) {
     }
 
     if (sigmask != 0 && no_epoll_pwait != 0)
-      if (pthread_sigmask(SIG_UNBLOCK, &sigset, NULL))
+      if (pthread_sigmask(SIG_UNBLOCK, &sigset, NULL)) /* recover signal, by lgw */
         abort();
 
     /* Update loop->time unconditionally. It's tempting to skip the update when
      * timeout == 0 (i.e. non-blocking poll) but there is no guarantee that the
      * operating system didn't reschedule our process while in the syscall.
      */
-    SAVE_ERRNO(uv__update_time(loop));
+    SAVE_ERRNO(uv__update_time(loop)); /* update loop->time, by lgw */
 
-    if (nfds == 0) {
+    if (nfds == 0) { /* no events reach, by lgw */
       assert(timeout != -1);
 
-      timeout = real_timeout - timeout;
+      timeout = real_timeout - timeout; /* fix kernel bug, see above, by lgw */
       if (timeout > 0)
         continue;
 
@@ -299,11 +301,12 @@ void uv__io_poll(uv_loop_t* loop, int timeout) {
     if (nfds == -1) {
       if (errno == ENOSYS) {
         /* epoll_wait() or epoll_pwait() failed, try the other system call. */
+        /* what? haha... there is no other syscall above, by lgw */
         assert(no_epoll_wait == 0 || no_epoll_pwait == 0);
         continue;
       }
 
-      if (errno != EINTR)
+      if (errno != EINTR)  /* epoll wait no EPIPE signal, only signal EINTR,  so we have to captrue SIGINT by ourselves, by lgw */
         abort();
 
       if (timeout == -1)
@@ -318,10 +321,10 @@ void uv__io_poll(uv_loop_t* loop, int timeout) {
 
     have_signals = 0;
     nevents = 0;
-
+    /* events reach, by lgw */
     assert(loop->watchers != NULL);
-    loop->watchers[loop->nwatchers] = (void*) events;
-    loop->watchers[loop->nwatchers + 1] = (void*) (uintptr_t) nfds;
+    loop->watchers[loop->nwatchers] = (void*) events; /* save events */
+    loop->watchers[loop->nwatchers + 1] = (void*) (uintptr_t) nfds;  /* save events count, by lgw */
     for (i = 0; i < nfds; i++) {
       pe = events + i;
       fd = pe->data;
@@ -333,7 +336,7 @@ void uv__io_poll(uv_loop_t* loop, int timeout) {
       assert(fd >= 0);
       assert((unsigned) fd < loop->nwatchers);
 
-      w = loop->watchers[fd];
+      w = loop->watchers[fd]; /* get the watcher by fd,  by lgw */
 
       if (w == NULL) {
         /* File descriptor that we've stopped watching, disarm it.
@@ -341,6 +344,7 @@ void uv__io_poll(uv_loop_t* loop, int timeout) {
          * Ignore all errors because we may be racing with another thread
          * when the file descriptor is closed.
          */
+         /* because we use open function with O_CLOEXEC flag, by lgw */
         uv__epoll_ctl(loop->backend_fd, UV__EPOLL_CTL_DEL, fd, pe);
         continue;
       }
@@ -350,6 +354,7 @@ void uv__io_poll(uv_loop_t* loop, int timeout) {
        * the current watcher. Also, filters out events that users has not
        * requested us to watch.
        */
+      /* w->pevents 是我们关注的事件 */
       pe->events &= w->pevents | POLLERR | POLLHUP;
 
       /* Work around an epoll quirk where it sometimes reports just the
@@ -368,7 +373,7 @@ void uv__io_poll(uv_loop_t* loop, int timeout) {
        * free when we switch over to edge-triggered I/O.
        */
       if (pe->events == POLLERR || pe->events == POLLHUP)
-        pe->events |= w->pevents & (POLLIN | POLLOUT);
+        pe->events |= w->pevents & (POLLIN | POLLOUT); /* 如果用户有关注POLLIN 和 POLLOUT, 则将pe->events也增加POLLIN和POLLOUT, by lgw */
 
       if (pe->events != 0) {
         /* Run signal watchers last.  This also affects child process watchers
@@ -377,15 +382,16 @@ void uv__io_poll(uv_loop_t* loop, int timeout) {
         if (w == &loop->signal_io_watcher)
           have_signals = 1;
         else
-          w->cb(loop, w, pe->events);
+          w->cb(loop, w, pe->events); /* run callback, eg: uv_tcp_t will call uv__stream_io in stream.h, by lgw */
 
         nevents++;
       }
     }
 
     if (have_signals != 0)
-      loop->signal_io_watcher.cb(loop, &loop->signal_io_watcher, POLLIN);
+      loop->signal_io_watcher.cb(loop, &loop->signal_io_watcher, POLLIN); /* if signal, spec POLLIN, by lgw */
 
+    /* 回调已经调用完毕, 清除数据, by lgw */
     loop->watchers[loop->nwatchers] = NULL;
     loop->watchers[loop->nwatchers + 1] = NULL;
 
