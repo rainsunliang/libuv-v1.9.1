@@ -87,7 +87,7 @@ void uv__stream_init(uv_loop_t* loop,
   QUEUE_INIT(&stream->write_completed_queue);
   stream->write_queue_size = 0;
 
-  if (loop->emfile_fd == -1) {
+  if (loop->emfile_fd == -1) { /* 多开一个fd,是为了后面fd不够用的时候,使用它来接收等待接收的socket，然后关闭,相当于通知前端我们过载了。可以参考uv__emfile_trick函数的解释, by lgw */
     err = uv__open_cloexec("/dev/null", O_RDONLY);
     if (err < 0)
         /* In the rare case that "/dev/null" isn't mounted open "/"
@@ -102,7 +102,7 @@ void uv__stream_init(uv_loop_t* loop,
   stream->select = NULL;
 #endif /* defined(__APPLE_) */
 
-  uv__io_init(&stream->io_watcher, uv__stream_io, -1); /* fd default -1 */
+  uv__io_init(&stream->io_watcher, uv__stream_io, -1); /* stream的默认回调是uv__stream_io, fd default -1 */
 }
 
 
@@ -391,8 +391,8 @@ int uv__stream_open(uv_stream_t* stream, int fd, int flags) {
   int enable;
 #endif
 
-  if (!(stream->io_watcher.fd == -1 || stream->io_watcher.fd == fd)) /* !=-1 && == fd, by lgw */
-    return -EBUSY;
+  if (!(stream->io_watcher.fd == -1 || stream->io_watcher.fd == fd)) /* io_watcher.fd==fd!=-1, by lgw */
+    return -EBUSY; /* in linux EBUSY = Device or resource busy, by lgw */
 
   assert(fd >= 0);
   stream->flags |= flags;
@@ -446,7 +446,7 @@ void uv__stream_destroy(uv_stream_t* stream) {
     stream->connect_req = NULL;
   }
 
-  uv__stream_flush_write_queue(stream, -ECANCELED);
+  uv__stream_flush_write_queue(stream, -ECANCELED); /* ECANCELED in linux mean Operation Canceled */
   uv__write_callbacks(stream);
 
   if (stream->shutdown_req) {
@@ -470,30 +470,31 @@ void uv__stream_destroy(uv_stream_t* stream) {
  * immediately to signal the clients that we're overloaded - and we are, but
  * we still keep on trucking.
  *
- * There is one caveat: it's not reliable in a multi-threaded environment.
+ * There is one caveat: it's not reliable in a multi-threaded environment.  非线程安全,可能有误差
  * The file descriptor limit is per process. Our party trick fails if another
  * thread opens a file or creates a socket in the time window between us
  * calling close() and accept().
  */
+ /* close 隐藏的efile_fd，相当于空出一个fd来使用。 可以看 */
 static int uv__emfile_trick(uv_loop_t* loop, int accept_fd) {
   int err;
   int emfile_fd;
 
-  if (loop->emfile_fd == -1)
+  if (loop->emfile_fd == -1) /* 关于emfild_fd 请看 uv__stream_init, by lgw */
     return -EMFILE;
 
   uv__close(loop->emfile_fd);
   loop->emfile_fd = -1;
 
   do {
-    err = uv__accept(accept_fd);
-    if (err >= 0)
+    err = uv__accept(accept_fd); 
+    if (err >= 0) /* 通过预留的fd,来将所有等待接收的socket接收了，然后关闭，相当于通知服务端过载了 by lgw */
       uv__close(err);
-  } while (err >= 0 || err == -EINTR);
+  } while (err >= 0 || err == -EINTR); /* 如果是EAGIN是会退出循环,EGAIN表示没有连接等待接收 by lgw */
 
-  emfile_fd = uv__open_cloexec("/", O_RDONLY);
+  emfile_fd = uv__open_cloexec("/", O_RDONLY); /* 重新打开我们的备用fd by lgw */
   if (emfile_fd >= 0)
-    loop->emfile_fd = emfile_fd;
+    loop->emfile_fd = emfile_fd; /* 理论上是会100%执行到这里,除非/没有挂载,但是根目录怎么可能不挂载呢　by lgw */
 
   return err;
 }
@@ -521,7 +522,8 @@ void uv__server_io(uv_loop_t* loop, uv__io_t* w, unsigned int events) {
   /* connection_cb can close the server socket while we're
    * in the loop so check it on each iteration.
    */
-  while (uv__stream_fd(stream) != -1) {
+  /* 防止connection_cb会close server socket也就是 handle->io_watcher.fd, 循环中每次检查它, by lgw */
+  while (uv__stream_fd(stream) != -1) { /* #define uv__stream_fd(handle) ((handle)->io_watcher.fd), by lgw */
     assert(stream->accepted_fd == -1);
 
 #if defined(UV_HAVE_KQUEUE)
@@ -529,31 +531,35 @@ void uv__server_io(uv_loop_t* loop, uv__io_t* w, unsigned int events) {
       return;
 #endif /* defined(UV_HAVE_KQUEUE) */
 
-    err = uv__accept(uv__stream_fd(stream)); /* 系统调用 */
+    err = uv__accept(uv__stream_fd(stream)); /* 系统调用accept, by lgw */
     if (err < 0) {
-      if (err == -EAGAIN || err == -EWOULDBLOCK) /* Try Again, 不直接循环 accept? by lgw */
+      if (err == -EAGAIN || err == -EWOULDBLOCK) /* Try Again, inlinux EAGAIN == EWOULDBLOCK, uv__socket打開的socket都是nonblock的, 
+      为什么不直接循环 accept? 我猜不在这里循环，因为会导致整个loop的饥饿 by lgw */
         return;  /* Not an error. */
 
-      if (err == -ECONNABORTED) /* Software caused connection abort, by lgw */
+      if (err == -ECONNABORTED) /* Software caused connection abort-在linux如此描述, 我们只要做重试就好了 by lgw */
         continue;  /* Ignore. Nothing we can do about that. */
 
-      if (err == -EMFILE || err == -ENFILE) {
+      if (err == -EMFILE || err == -ENFILE) { /* in linux, EMFILE->Too many open files; ENFILE->File table overflow, by lgw  */
         err = uv__emfile_trick(loop, uv__stream_fd(stream));
-        if (err == -EAGAIN || err == -EWOULDBLOCK)
+        if (err == -EAGAIN || err == -EWOULDBLOCK) /* 没有连接等待连接 by lgw */
           break;
       }
 
-      stream->connection_cb(stream, err);/* 回调(错误) */
+      stream->connection_cb(stream, err);/* stream->accepted_fd = -1, 回调(带错误信息),一般用户在回调中不会调用uv_accept函数,如果
+      确实调用了uv_accept, uc_accept会返回-1,详细可以参考uv_accept, by lgw */
       continue;
     }
 
     UV_DEC_BACKLOG(w)  /* # define UV_DEC_BACKLOG(w) 不做任何事情 */
-    stream->accepted_fd = err;
-    stream->connection_cb(stream, 0); /* 回调(成功) */
+    stream->accepted_fd = err; /* 看上面的while循环,有个break,也就是 err有可能等于刚接收的socket,或者是-EGAIN或者-EWOULDBLOCK, 其实用户层
+    如果知道是这两个参数,应该不做任何处理，因为没有连接可以接收, by lgw */
+    stream->connection_cb(stream, 0); /* stream->accepted_fd 等于刚接收到sock也可能是-1,回调(带成功标志0) */
 
     if (stream->accepted_fd != -1) {
       /* The user hasn't yet accepted called uv_accept() */
-      /* 如果用户调用了uv_accept  stream->accepted_fd会被设置为-1 */
+      /* 如果用户调用了uv_accept  stream->accepted_fd会被设置为-1, 用户如果没有调用accept,则我们停止
+      前面已经 uv__io_start的POLLIN事件  */
       uv__io_stop(loop, &stream->io_watcher, POLLIN);
       return;
     }
@@ -561,7 +567,7 @@ void uv__server_io(uv_loop_t* loop, uv__io_t* w, unsigned int events) {
     if (stream->type == UV_TCP && (stream->flags & UV_TCP_SINGLE_ACCEPT)) {
       /* Give other processes a chance to accept connections. */
       struct timespec timeout = { 0, 1 };
-      nanosleep(&timeout, NULL);
+      nanosleep(&timeout, NULL); /* sleep 1 纳秒 */
     }
   }
 }
@@ -569,14 +575,14 @@ void uv__server_io(uv_loop_t* loop, uv__io_t* w, unsigned int events) {
 
 #undef UV_DEC_BACKLOG
 
-/* 用户调用 */
+/* 用户调用的accept接口,并非调用syscall accept, by lgw */
 int uv_accept(uv_stream_t* server, uv_stream_t* client) {
   int err;
 
   /* TODO document this */
   assert(server->loop == client->loop);
 
-  if (server->accepted_fd == -1)
+  if (server->accepted_fd == -1) /* uv__server_io中回调stream->connection_cb(stream, err);携带err!=0错误,但是用户还是执行了uv_accept */
     return -EAGAIN;
 
   switch (client->type) {
@@ -663,7 +669,7 @@ static void uv__drain(uv_stream_t* stream) {
 
   assert(QUEUE_EMPTY(&stream->write_queue));
   uv__io_stop(stream->loop, &stream->io_watcher, POLLOUT);
-  uv__stream_osx_interrupt_select(stream);
+  uv__stream_osx_interrupt_select(stream); /* 只有osx系统有实现 */
 
   /* Shutdown? */
   if ((stream->flags & UV_STREAM_SHUTTING) &&
@@ -928,7 +934,7 @@ static void uv__write_callbacks(uv_stream_t* stream) {
     q = QUEUE_HEAD(&stream->write_completed_queue);
     req = QUEUE_DATA(q, uv_write_t, queue);
     QUEUE_REMOVE(q);
-    uv__req_unregister(stream->loop, req);
+    uv__req_unregister(stream->loop, req); /* 取消写请求的注册 */
 
     if (req->bufs != NULL) {
       stream->write_queue_size -= uv__write_req_size(req);
@@ -1239,7 +1245,7 @@ int uv_shutdown(uv_shutdown_t* req, uv_stream_t* stream, uv_shutdown_cb cb) {
   return 0;
 }
 
-
+/* 读写数据回调,在uv_stream_init中设置, by lgw */
 static void uv__stream_io(uv_loop_t* loop, uv__io_t* w, unsigned int events) {
   uv_stream_t* stream;
 
@@ -1250,7 +1256,7 @@ static void uv__stream_io(uv_loop_t* loop, uv__io_t* w, unsigned int events) {
          stream->type == UV_TTY);
   assert(!(stream->flags & UV_CLOSING));
 
-  if (stream->connect_req) { /* 如果是连接请求 */
+  if (stream->connect_req) { /* 该字段是uv_connect_t,如果是连接请求 */
     uv__stream_connect(stream);
     return;
   }
@@ -1305,7 +1311,9 @@ static void uv__stream_connect(uv_stream_t* stream) {
   assert(stream->type == UV_TCP || stream->type == UV_NAMED_PIPE);
   assert(req);
 
+  /* 通过loop->pendding_queue回调(但是connect有问题放到了这个队列,这个队列是在下一个tick执行的) */
   if (stream->delayed_error) {
+    /* 这里是说为了统一不同系统的差异uv__tcp_connect函数有说明 */
     /* To smooth over the differences between unixes errors that
      * were reported synchronously on the first connect can be delayed
      * until the next tick--which is now.
@@ -1315,7 +1323,7 @@ static void uv__stream_connect(uv_stream_t* stream) {
   } else {
     /* Normal situation: we need to get the socket error from the kernel. */
     assert(uv__stream_fd(stream) >= 0);
-    getsockopt(uv__stream_fd(stream),
+    getsockopt(uv__stream_fd(stream), /* 从内核获取错误 */
                SOL_SOCKET,
                SO_ERROR,
                &error,
@@ -1323,24 +1331,24 @@ static void uv__stream_connect(uv_stream_t* stream) {
     error = -error;
   }
 
-  if (error == -EINPROGRESS)
+  if (error == -EINPROGRESS)   /* 如果还在连接中不做处理 */
     return;
 
-  stream->connect_req = NULL;
-  uv__req_unregister(stream->loop, req);
+  stream->connect_req = NULL; 
+  uv__req_unregister(stream->loop, req); /* remove req from (loop)->active_reqs, by lgw */
 
-  if (error < 0 || QUEUE_EMPTY(&stream->write_queue)) {
-    uv__io_stop(stream->loop, &stream->io_watcher, POLLOUT);
+  if (error < 0 || QUEUE_EMPTY(&stream->write_queue)) { /* 我们在uv__tcp_connect的时候做了uv__io_start */
+    uv__io_stop(stream->loop, &stream->io_watcher, POLLOUT); /* 如果错误或者没有写请求,则取消watcher的POLLOUT事件 */
   }
 
   if (req->cb)
     req->cb(req, error);
 
-  if (uv__stream_fd(stream) == -1)
+  if (uv__stream_fd(stream) == -1) /* 在上面req->cb回到中被close了 */
     return;
 
   if (error < 0) {
-    uv__stream_flush_write_queue(stream, -ECANCELED);
+    uv__stream_flush_write_queue(stream, -ECANCELED); /* ECANCELED in linux mean Operation Canceled */
     uv__write_callbacks(stream);
   }
 }
@@ -1498,7 +1506,7 @@ int uv_try_write(uv_stream_t* stream,
     return written;
 }
 
-
+/* 用户accept后调用 */
 int uv_read_start(uv_stream_t* stream,
                   uv_alloc_cb alloc_cb,
                   uv_read_cb read_cb) {

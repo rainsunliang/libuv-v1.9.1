@@ -136,7 +136,7 @@ int uv__tcp_bind(uv_tcp_t* tcp,
   return 0;
 }
 
-
+ /* before connect excute uv__tcp_init->uv__stream_init-> handle->io_watcher.cb = uv__stream_io, by lgw  */
 int uv__tcp_connect(uv_connect_t* req,
                     uv_tcp_t* handle,
                     const struct sockaddr* addr,
@@ -150,6 +150,7 @@ int uv__tcp_connect(uv_connect_t* req,
   if (handle->connect_req != NULL)
     return -EALREADY;  /* FIXME(bnoordhuis) -EINVAL or maybe -EBUSY. */
 
+  /* 调用 socket() 打开一个fd */
   err = maybe_new_socket(handle,
                          addr->sa_family,
                          UV_STREAM_READABLE | UV_STREAM_WRITABLE);
@@ -160,10 +161,10 @@ int uv__tcp_connect(uv_connect_t* req,
 
   do
     r = connect(uv__stream_fd(handle), addr, addrlen);
-  while (r == -1 && errno == EINTR);
+  while (r == -1 && errno == EINTR); /* 如果是EINTR被中断,则继续connnect */
 
   if (r == -1) {
-    if (errno == EINPROGRESS)
+    if (errno == EINPROGRESS) /* Operation now in progress, connect在内核是一个持续的过程,需要一点时间通过网络建立连接 */
       ; /* not an error */
     else if (errno == ECONNREFUSED)
     /* If we get a ECONNREFUSED wait until the next tick to report the
@@ -175,16 +176,22 @@ int uv__tcp_connect(uv_connect_t* req,
       return -errno;
   }
 
-  uv__req_init(handle->loop, req, UV_CONNECT);
+  uv__req_init(handle->loop, req, UV_CONNECT); /* add req to (loop)->active_reqs, by lgw */
   req->cb = cb;
   req->handle = (uv_stream_t*) handle;
   QUEUE_INIT(&req->queue);
   handle->connect_req = req;
 
-  uv__io_start(handle->loop, &handle->io_watcher, POLLOUT);
+  /* TODO 到这里 connect 有可能没有成功(EINPROGRESS | ECONNREFUSED), 怎么不用判断ECONNREFUSED直接POLLOUT了,对方都refuse了,为啥呢？
+  这里关注POLLOUT事件之后,还能够产生ECONNREFUSED？或其他错误来回调uv__stream_io? 经过测试发现,这里不会立刻返回ECONNREFUSED,多次测试
+  都是返回EINPROGRESS,然后用epoll关注EPOLLOUT事件,等一会如果连接不上,epoll会同时返回EPOLLOUT,EPOLLERR,EPOLLHUP三个事件,然后通过getsockopt
+  获取到error是*/
+  /* 如果EINPROGRESS现在关注POLLOUT了,如果连接成功则写缓冲区开始为空,所以一定会接收到POLLOUT(不用一起判断读写) */
+  uv__io_start(handle->loop, &handle->io_watcher, POLLOUT); /* watch POLLOUT event, by lgw */
 
-  if (handle->delayed_error)
-    uv__io_feed(handle->loop, &handle->io_watcher);
+  /* connect 没有成功 ECONNREFUSED, 将io_watcher加入loop->pending_queue, 放到下一个tick执行, 将各个系统的差异统一,上面有介绍说Solaris和其他unix系统不一 */
+  if (handle->delayed_error) 
+    uv__io_feed(handle->loop, &handle->io_watcher); /* 将io_watcher加入loop->pending_queue */
 
   return 0;
 }
@@ -272,7 +279,7 @@ int uv_tcp_listen(uv_tcp_t* tcp, int backlog, uv_connection_cb cb) {
   tcp->connection_cb = cb;
 
   /* Start listening for connections. */
-  tcp->io_watcher.cb = uv__server_io; /* uv__server_iod defined in stream.c, by lgw */
+  tcp->io_watcher.cb = uv__server_io; /* 本来uv_stream_init的时候cb=uv__stream_io,在这里覆盖为uv__server_io defined in stream.c, by lgw */
   uv__io_start(tcp->loop, &tcp->io_watcher, POLLIN); /* only POLIN, NO POLLET means epoll use LT mode(which default),  uv__io_start defined in core.c, by lgw */
 
   return 0;

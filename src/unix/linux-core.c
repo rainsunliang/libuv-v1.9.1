@@ -354,7 +354,7 @@ void uv__io_poll(uv_loop_t* loop, int timeout) {
        * the current watcher. Also, filters out events that users has not
        * requested us to watch.
        */
-      /* w->pevents 是我们关注的事件 */
+      /* w->pevents 是我们关注的事件, 将我们关注的事件和 POLLERR和POLLHUP事件集合赋值给 pe->events */
       pe->events &= w->pevents | POLLERR | POLLHUP;
 
       /* Work around an epoll quirk where it sometimes reports just the
@@ -373,7 +373,7 @@ void uv__io_poll(uv_loop_t* loop, int timeout) {
        * free when we switch over to edge-triggered I/O.
        */
       if (pe->events == POLLERR || pe->events == POLLHUP)
-        pe->events |= w->pevents & (POLLIN | POLLOUT); /* 如果用户有关注POLLIN 和 POLLOUT, 则将pe->events也增加POLLIN和POLLOUT, by lgw */
+        pe->events |= w->pevents & (POLLIN | POLLOUT); /* 如果用户有关注POLLIN和POLLOUT, 则将pe->events也增加POLLIN和POLLOUT, by lgw */
 
       if (pe->events != 0) {
         /* Run signal watchers last.  This also affects child process watchers
@@ -382,7 +382,7 @@ void uv__io_poll(uv_loop_t* loop, int timeout) {
         if (w == &loop->signal_io_watcher)
           have_signals = 1;
         else
-          w->cb(loop, w, pe->events); /* run callback, eg: uv_tcp_t will call uv__stream_io in stream.h, by lgw */
+          w->cb(loop, w, pe->events); /* run callback, eg: uv_tcp_t connect will call uv__stream_io in stream.h, uv_tcp_t listen will call uv__server_io in tcp.c by lgw */
 
         nevents++;
       }
