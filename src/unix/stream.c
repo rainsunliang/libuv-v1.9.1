@@ -996,7 +996,7 @@ uv_handle_type uv__handle_type(int fd) {
 
 
 static void uv__stream_eof(uv_stream_t* stream, const uv_buf_t* buf) {
-  stream->flags |= UV_STREAM_READ_EOF;
+  stream->flags |= UV_STREAM_READ_EOF; /* 增加 EOF标志 */
   uv__io_stop(stream->loop, &stream->io_watcher, POLLIN);
   if (!uv__io_active(&stream->io_watcher, POLLOUT))
     uv__handle_stop(stream);
@@ -1118,7 +1118,7 @@ static void uv__read(uv_stream_t* stream) {
   /* Prevent loop starvation when the data comes in as fast as (or faster than)
    * we can read it. XXX Need to rearm(再武装) fd if we switch to edge-triggered I/O.
    */
-  /* 防止大量的数据达到一直在读,导致循环饿死,其他处理不了。libuv是LT模式 */
+  /* 防止大量的数据达到一直在读,导致循环饿死,其他逻辑没有机会处理。libuv是LT模式 */
   count = 32;
 
   is_ipc = stream->type == UV_NAMED_PIPE && ((uv_pipe_t*) stream)->ipc;
@@ -1127,11 +1127,11 @@ static void uv__read(uv_stream_t* stream) {
    * tcp->read_cb is NULL or not?
    */
   while (stream->read_cb
-      && (stream->flags & UV_STREAM_READING)
+      && (stream->flags & UV_STREAM_READING) /* uv_read_start中设置的UV_STREAM_READING */
       && (count-- > 0)) {
     assert(stream->alloc_cb != NULL);
 
-    stream->alloc_cb((uv_handle_t*)stream, 64 * 1024, &buf);
+    stream->alloc_cb((uv_handle_t*)stream, 64 * 1024, &buf); /* sugguest size 是写死了 64K, buf是栈上变量, by lgw */
     if (buf.len == 0) {
       /* User indicates it can't or won't handle the read. */
       stream->read_cb(stream, UV_ENOBUFS, &buf);
@@ -1139,13 +1139,13 @@ static void uv__read(uv_stream_t* stream) {
     }
 
     assert(buf.base != NULL);
-    assert(uv__stream_fd(stream) >= 0);
+    assert(uv__stream_fd(stream) >= 0); /* alloc_cb如果关闭了fd,会导致退出,这个有点强势哦,by lgw */
 
     if (!is_ipc) {
       do {
         nread = read(uv__stream_fd(stream), buf.base, buf.len);
       }
-      while (nread < 0 && errno == EINTR);
+      while (nread < 0 && errno == EINTR); /* nread=0,一般是对方shutdown了, by lgw */
     } else {
       /* ipc uses recvmsg */
       msg.msg_flags = 0;
@@ -1171,23 +1171,23 @@ static void uv__read(uv_stream_t* stream) {
           uv__io_start(stream->loop, &stream->io_watcher, POLLIN);
           uv__stream_osx_interrupt_select(stream);
         }
-        stream->read_cb(stream, 0, &buf);
-      } else {
+        stream->read_cb(stream, 0, &buf); /* 只是当前没有数据可能，这回调有什么意义？ by lgw */
+      } else { /* 比如EPIPE等, 在linux好像不会出现 by lgw */
         /* Error. User should call uv_close(). */
         stream->read_cb(stream, -errno, &buf);
         if (stream->flags & UV_STREAM_READING) {
-          stream->flags &= ~UV_STREAM_READING;
-          uv__io_stop(stream->loop, &stream->io_watcher, POLLIN);
-          if (!uv__io_active(&stream->io_watcher, POLLOUT))
+          stream->flags &= ~UV_STREAM_READING; /* 解除读状态, by lgw */
+          uv__io_stop(stream->loop, &stream->io_watcher, POLLIN); /* 不再监听读事件, by lgw */
+          if (!uv__io_active(&stream->io_watcher, POLLOUT)) /* 如果没有监听写事件,才停止handle,因为tcp是全双工可以单向关闭 by lgw */
             uv__handle_stop(stream);
           uv__stream_osx_interrupt_select(stream);
         }
       }
       return;
     } else if (nread == 0) {
-      uv__stream_eof(stream, &buf);
+      uv__stream_eof(stream, &buf); /* 跟上面EPIPE等错误处理一样,停止监听读事件等,不过它增加了一个EOF的状态, by lgw */
       return;
-    } else {
+    } else { /* nead > 0, by lgw */
       /* Successful read */
       ssize_t buflen = buf.len;
 
@@ -1198,9 +1198,10 @@ static void uv__read(uv_stream_t* stream) {
           return;
         }
       }
-      stream->read_cb(stream, nread, &buf);
+      stream->read_cb(stream, nread, &buf); /* 可见每次读数据都会回调,也就是粘包什么的还是得应用去做, by lgw */
 
       /* Return if we didn't fill the buffer, there is no more data to read. */
+      /* 如果没有填满buf,说明这次的所有数据读完了,没有数据可读了,可以返回,不过这里增加了UV_STREAM_READ_PARTIAL标志,而这个标志是uv__read就会清除的，这个标志有什么用呢? */
       if (nread < buflen) {
         stream->flags |= UV_STREAM_READ_PARTIAL;
         return;
